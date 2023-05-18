@@ -1,0 +1,186 @@
+// CLUTRR Scallop
+
+// question :: (sub, obj) represents a question asking about relation between `sub` and `obj`
+type question(sub: String, obj: String)
+
+// context :: (rela, sub, obj) represents there is a `rela` between `sub` and `obj`
+type context(rela: usize, sub: String, obj: String)
+
+// Relation level higher-order relationships
+type transitive(r1: usize, r2: usize, r3: usize)
+
+rel transitive = {
+  (0, 0, 6), // daughter-daughter-granddaughter
+  (0, 1, 0), // daughter-sister-daughter
+  (0, 2, 15), // daughter-son-grandson
+  (0, 3, 1), // daughter-aunt-sister
+  (0, 4, 5), // daughter-father-husband
+  (0, 5, 16), // daughter-husband-son-in-law
+  (0, 7, 2), // daughter-brother-son
+  (0, 9, 12), // daughter-mother-wife
+  (0, 10, 7), // daughter-uncle-brother
+  (0, 11, 4), // daughter-grandfather-father
+  (0, 11, 17), // daughter-grandfather-father-in-law
+  (0, 13, 9), // daughter-grandmother-mother
+  (0, 13, 19), // daughter-grandmother-mother-in-law
+  (1, 0, 14), // sister-daughter-niece
+  (1, 1, 1), // sister-sister-sister
+  (1, 2, 8), // sister-son-nephew
+  (1, 3, 3), // sister-aunt-aunt
+  (1, 4, 4), // sister-father-father
+  (1, 7, 7), // sister-brother-brother
+  // (1, 8, 8), // sister-nephew-nephew (likely)
+  // (1, 8, 2), // sister-nephew-son (likely)
+  (1, 9, 9), // sister-mother-mother
+  (1, 10, 10), // sister-uncle-uncle
+  (1, 11, 11), // sister-grandfather-grandfather
+  (1, 13, 13), // sister-grandmother-grandmother
+  // (1, 14, 14), // sister-niece-niece (likely)
+  // (1, 14, 0), // sister-niece-daughter (likely)
+  (2, 0, 6), // son-daughter-granddaughter
+  (2, 1, 0), // son-sister-daughter
+  (2, 2, 15), // son-son-grandson
+  (2, 3, 1), // son-aunt-sister (likely)
+  (2, 4, 5), // son-father-husband
+  (2, 7, 2), // son-brother-son
+  (2, 9, 12), // son-mother-wife
+  (2, 10, 7), // son-uncle-brother (likely)
+  (2, 11, 4), // son-grandfather-father (likely)
+  // (2, 11, 17), // son-grandfather-father-in-law (likely)
+  (2, 12, 18), // son-wife-daughter-in-law
+  (2, 13, 9), // son-grandmother-mother (likely)
+  // (2, 13, 19), // son-grandmother-mother-in-law (likely)
+  (3, 1, 3), // aunt-sister-aunt
+  (3, 4, 11), // aunt-father-grandfather
+  (3, 7, 10), // aunt-brother-uncle
+  (3, 9, 13), // aunt-mother-grandmother
+  (4, 0, 1), // father-daughter-sister
+  (4, 1, 3), // father-sister-aunt
+  (4, 2, 7), // father-son-brother
+  (4, 4, 11), // father-father-grandfather
+  // (4, 6, 0), // father-granddaughter-daughter (likely)
+  // (4, 6, 14), // father-granddaughter-niece (likely)
+  (4, 7, 10), // father-brother-uncle
+  (4, 9, 13), // father-mother-grandmother
+  (4, 12, 9), // father-wife-mother
+  (5, 0, 0), // husband-daughter-daughter
+  (5, 2, 2), // husband-son-son
+  (5, 4, 17), // husband-father-father-in-law
+  (5, 6, 6), // husband-granddaughter-granddaughter
+  (5, 9, 19), // husband-mother-mother-in-law
+  (5, 15, 15), // husband-grandson-grandson
+  (6, 1, 6), // granddaughter-sister-granddaughter
+  // (6, 4, 2), // granddaughter-father-son (likely)
+  // (6, 4, 16), // granddaughter-father-son-in-law (likely)
+  (6, 7, 15), // granddaughter-brother-grandson
+  // (6, 9, 0), // granddaughter-mother-daughter (likely)
+  // (6, 9, 18), // granddaughter-mother-daughter-in-law (likely)
+  // (6, 11, 5), // granddaughter-grandfather-husband (likely)
+  // (6, 13, 12), // granddaughter-grandmother-wife (likely)
+  (7, 0, 14), // brother-daughter-niece
+  (7, 1, 1), // brother-sister-sister
+  (7, 2, 8), // brother-son-nephew
+  (7, 3, 3), // brother-aunt-aunt
+  (7, 4, 4), // brother-father-father
+  (7, 7, 7), // brother-brother-brother
+  // (7, 8, 8), // brother-nephew-nephew (likely)
+  // (7, 8, 2), // brother-nephew-son (likely)
+  (7, 9, 9), // brother-mother-mother
+  (7, 10, 10), // brother-uncle-uncle
+  (7, 11, 11), // brother-grandfather-grandfather
+  (7, 13, 13), // brother-grandmother-grandmother
+  // (7, 14, 14), // brother-niece-niece (likely)
+  // (7, 14, 0), // brother-niece-daughter (likely)
+  (8, 1, 14), // nephew-sister-niece
+  // (8, 3, 12), // nephew-aunt-wife (likely)
+  // (8, 3, 12), // nephew-aunt-sister (likely)
+  // (8, 4, 7), // nephew-father-brother (likely)
+  (8, 7, 8), // nephew-brother-nephew
+  // (8, 9, 1), // nephew-mother-sister (likely)
+  // (8, 10, 7), // nephew-uncle-brother (likely)
+  // (8, 10, 5), // nephew-uncle-husband (likely)
+  // (8, 11, 4), // nephew-grandfather-father (likely)
+  // (8, 13, 9), // nephew-grandmother-mother (likely)
+  (9, 0, 1), // mother-daughter-sister
+  (9, 1, 3), // mother-sister-aunt
+  (9, 2, 7), // mother-son-brother
+  (9, 4, 11), // mother-father-grandfather
+  (9, 5, 4), // mother-husband-father
+  // (9, 6, 0), // mother-granddaughter-daughter (likely)
+  // (9, 6, 14), // mother-granddaughter-niece (likely)
+  (9, 7, 10), // mother-brother-uncle
+  (9, 9, 13), // mother-mother-grandmother
+  // (9, 15, 2), // mother-grandson-son (likely)
+  // (9, 15, 8), // mother-grandson-nephew (likely)
+  // (9, 16, 5), // mother-son-in-law-husband (likely)
+  (9, 17, 11), // mother-father-in-law-grandfather
+  // (9, 18, 12), // mother-daughter-in-law-wife (likely)
+  (9, 19, 13), // mother-mother-in-law-grandmother
+  (10, 1, 3), // uncle-sister-aunt
+  (10, 4, 11), // uncle-father-grandfather
+  (10, 7, 10), // uncle-brother-uncle
+  (10, 9, 13), // uncle-mother-grandmother
+  // (11, 0, 9), // grandfather-daughter-mother (likely)
+  // (11, 0, 3), // grandfather-daughter-aunt (likely)
+  // (11, 2, 4), // grandfather-son-father (likely)
+  // (11, 2, 10), // grandfather-son-uncle (likely)
+  (11, 12, 13), // grandfather-wife-grandmother
+  (12, 0, 0), // wife-daughter-daughter
+  (12, 2, 2), // wife-son-son
+  (12, 4, 17), // wife-father-father-in-law
+  (12, 6, 6), // wife-granddaughter-granddaughter
+  (12, 9, 19), // wife-mother-mother-in-law
+  (12, 15, 15), // wife-grandson-grandson
+  (12, 16, 16), // wife-son-in-law-son-in-law
+  (12, 17, 4), // wife-father-in-law-father
+  (12, 18, 18), // wife-daughter-in-law-daughter-in-law
+  (12, 19, 9), // wife-mother-in-law-mother
+  (13, 5, 11), // grandmother-husband-grandfather
+  (15, 1, 6), // grandson-sister-granddaughter
+  // (15, 4, 2), // grandson-father-son (likely)
+  // (15, 4, 16), // grandson-father-son-in-law (likely)
+  (15, 7, 15), // grandson-brother-grandson
+}
+
+// Things can be derived through context propagation
+rel derived(r, s, o) = context(r, s, o)
+
+// Transitive
+rel derived(r3, x, z) = transitive(r1, r2, r3), derived(r1, x, y), derived(r2, y, z), x != z
+
+// Answer
+rel answer(r) = question(s, o), derived(r, s, o)
+
+// relation_id_map = {
+//   'daughter': 0,
+//   'sister': 1,
+//   'son': 2,
+//   'aunt': 3,
+//   'father': 4,
+//   'husband': 5,
+//   'granddaughter': 6,
+//   'brother': 7,
+//   'nephew': 8,
+//   'mother': 9,
+//   'uncle': 10,
+//   'grandfather': 11,
+//   'wife': 12,
+//   'grandmother': 13,
+//   'niece': 14,
+//   'grandson': 15,
+//   'son-in-law': 16,
+//   'father-in-law': 17,
+//   'daughter-in-law': 18,
+//   'mother-in-law': 19,
+//   'nothing': 20,
+// }
+
+// Integrity constraints
+// grandfather => grandson / granddaughter
+// TODO: Only put constraint on used in question process case
+rel violate_ic(!result) = result = forall(a, b: derived(11, a, b) => (derived(15, b, a) or derived(6, b, a)))
+rel violate_ic(!result) = result = forall(a, b: derived(13, a, b) => (derived(15, b, a) or derived(6, b, a))) // grandmother => grandson / granddaughter
+rel violate_ic(!result) = result = forall(a, b: derived(4, a, b) => (derived(2, b, a) or derived(0, b, a))) // father => son / daughter
+rel violate_ic(!result) = result = forall(a, b: derived(9, a, b) => (derived(2, b, a) or derived(0, b, a)))
+rel violate_ic(!result) = result = forall(a, b: derived(5, a, b) => derived(12, b, a))
+rel violate_ic(!result) = result = forall(a, b: derived(7, a, b) => (derived(7, b, a) or derived(1, b, a)))
