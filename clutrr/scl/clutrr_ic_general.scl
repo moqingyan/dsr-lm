@@ -69,13 +69,16 @@ rel generation = {
 rel valid_transitive_generation(r1, r2, r3) = transitive(r1, r2, r3), generation(r1, g1), generation(r2, g2), generation(r3, g1 + g2)
 rel valid_transitive_gender(r1, r2, r3) = transitive(r1, r2, r3), male(r2), male(r3)
 rel valid_transitive_gender(r1, r2, r3) = transitive(r1, r2, r3), female(r2), female(r3)
-// rel valid_transitive_marry(r1, r2, r3) = transitive(r1, HUSBAND, r3), female(r1), male(r3), r2 == HUSBAND
-// rel valid_transitive_marry(r1, r2, r3) = transitive(r1, WIFE, r3), male(r1), female(r3), r2 == WIFE
+
+rel valid_transitive_marry(r1, HUSBAND, r3) = transitive(r1, HUSBAND, r3), female(r1), male(r3)
+rel valid_transitive_marry(r1, WIFE, r3) = transitive(r1, WIFE, r3), male(r1), female(r3)
+rel valid_transitive_marry(r1, r2, r3) = transitive(r1, r2, r3), r2 != HUSBAND, r2 != WIFE
+
 rel valid_transitive_in_law(r1, r2, r3) = transitive(r1, r2, r3),
                                             r1 != DAUGHTER_IN_LAW, r1 != SON_IN_LAW, r1 != MOTHER_IN_LAW, r1 != FATHER_IN_LAW,
                                             r2 != DAUGHTER_IN_LAW, r2 != SON_IN_LAW, r2 != MOTHER_IN_LAW, r2 != FATHER_IN_LAW
-// rel valid_transitive(r1, r2, r3) = valid_transitive_gender(r1, r2, r3), valid_transitive_generation(r1, r2, r3), valid_transitive_in_law(r1, r2, r3), valid_transitive_marry(r1, r2, r3)
-rel valid_transitive(r1, r2, r3) = valid_transitive_gender(r1, r2, r3), valid_transitive_generation(r1, r2, r3), valid_transitive_in_law(r1, r2, r3)
+rel valid_transitive(r1, r2, r3) = valid_transitive_gender(r1, r2, r3), valid_transitive_generation(r1, r2, r3), valid_transitive_in_law(r1, r2, r3), valid_transitive_marry(r1, r2, r3)
+// rel valid_transitive(r1, r2, r3) = valid_transitive_gender(r1, r2, r3), valid_transitive_generation(r1, r2, r3), valid_transitive_in_law(r1, r2, r3)
 
 
 // query valid_transitive
@@ -90,6 +93,7 @@ rel violate_ic(!result) = result = forall(a, b: derived(FATHER, a, b) => (derive
 rel violate_ic(!result) = result = forall(a, b: derived(MOTHER, a, b) => (derived(SON, b, a) or derived(DAUGHTER, b, a)))
 rel violate_ic(!result) = result = forall(a, b: derived(HUSBAND, a, b) => derived(WIFE, b, a))
 rel violate_ic(!result) = result = forall(a, b: derived(BROTHER, a, b) => (derived(BROTHER, b, a) or derived(SISTER, b, a)))
+
 
 // rel violate_ic(!result) = result = forall(a, b: derived(GRANDFATHER, a, b) => (derived(GRANDSON, b, a) or derived(GRANDDAUGHTER, b, a)))
 // rel violate_ic(!result) = result = forall(a, b: derived(GRANDSON, a, b) => (derived(GRANDFATHER, b, a) or derived(GRANDMOTHER, b, a)))
