@@ -1,9 +1,0 @@
-// Base facts
-type query(sub: String, obj: String)
-type context(rela: usize, sub: String, obj: String) // Probabilistic
-rel transitive = {/* 92 transitivity facts */}
-
-// Rules to derive the final answer
-rel derived(r, s, o) = context(r, s, o)
-rel derived(r3, x, z) = transitive(r1, r2, r3), derived(r1, x, y), derived(r2, y, z), x != z
-rel answer(r) = question(s, o), derived(r, s, o)

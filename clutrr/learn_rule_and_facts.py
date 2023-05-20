@@ -14,6 +14,7 @@ import numpy as np
 from torch import nn, optim
 from torch.utils.data import DataLoader
 from transformers import RobertaModel, RobertaTokenizer
+from torch.optim.lr_scheduler import ExponentialLR
 import scallopy
 
 relation_id_map = {
@@ -78,7 +79,7 @@ def clutrr_loader(root, dataset, batch_size):
   train_dataset = CLUTRRDataset(root, dataset, "train")
   train_loader = DataLoader(train_dataset, batch_size, collate_fn=CLUTRRDataset.collate_fn, shuffle=True)
   test_dataset = CLUTRRDataset(root, dataset, "test")
-  test_loader = DataLoader(test_dataset, batch_size, collate_fn=CLUTRRDataset.collate_fn, shuffle=True)
+  test_loader = DataLoader(test_dataset, batch_size, collate_fn=CLUTRRDataset.collate_fn, shuffle=False)
   return (train_loader, test_loader)
 
 
@@ -117,7 +118,7 @@ class CLUTRRModel(nn.Module):
     test_top_k=3,
     scallop_softmax=False,
     sample_ct=150,
-
+    prob_decay = 0.001
   ):
     super(CLUTRRModel, self).__init__()
 
@@ -138,11 +139,12 @@ class CLUTRRModel(nn.Module):
     with open(gpt_pred_path, 'r') as f:
       gpt_preds = json.load(f)
     self.transitivity_probs = self.init_transitivity_from_file(gpt_preds)
+    self.transitivity_decay = prob_decay
 
     # Scallop reasoning context
     self.scallop_ctx = scallopy.ScallopContext(provenance=provenance, train_k=train_top_k, test_k=test_top_k)
-    self.scallop_ctx.set_iter_limit(10)
-    self.scallop_ctx.import_file(os.path.abspath(os.path.join(os.path.abspath(__file__), "../scl/clutrr_constraints.scl")))
+    self.scallop_ctx.set_iter_limit(12)
+    self.scallop_ctx.import_file(os.path.abspath(os.path.join(os.path.abspath(__file__), "../scl/clutrr_ic_general.scl")))
     self.scallop_ctx.set_non_probabilistic(["question"])
 
     if self.debug:
@@ -150,7 +152,10 @@ class CLUTRRModel(nn.Module):
     else:
       self.reason = self.scallop_ctx.forward_function(output_mappings={"answer": list(range(len(relation_id_map))), "violate_ic": [False, True]}, retain_graph=True)
 
-  def init_transitivity_from_file(self, gpt_preds, true_likelihood = 0.5, false_likelihood = 0.1):
+  def update_decay(self):
+    self.transitivity_probs = self.transitivity_probs * self.transitivity_decay
+
+  def init_transitivity_from_file(self, gpt_preds, true_likelihood = 0.1, false_likelihood = 0.01):
     gpt_pred_ids = []
     for rel1, rel1_info in gpt_preds.items():
       for rel2, rel3 in rel1_info.items():
@@ -317,7 +322,7 @@ class CLUTRRModel(nn.Module):
       curr_context_disjunctions = []
       for ((sub, obj), relations) in name_pair_to_relations_map.items():
         curr_context_facts += [(relations[k], (k, sub, obj)) for k in range(len(relation_id_map))]
-        curr_context_disjunctions.append(list(range(len(curr_context_facts) - 20, len(curr_context_facts))))
+        curr_context_disjunctions.append(list(range(len(curr_context_facts) - len(relation_id_map), len(curr_context_facts))))
       context_facts.append(curr_context_facts)
       context_disjunctions.append(curr_context_disjunctions)
       question_facts.append([queries[i]])
@@ -341,7 +346,7 @@ class CLUTRRModel(nn.Module):
     (splits, name_pairs, name_pair_relations) = self._extract_relations(clean_contexts, clean_context_splits, name_token_indices_maps)
     (context_facts, context_disjunctions, question_facts) = self._extract_facts(splits, name_pairs, name_pair_relations, queries)
 
-    transitivity_probs = torch.clamp(self.transitivity_probs, 0, 1)
+    transitivity_probs = torch.clamp(self.transitivity_probs, min=0, max=1)
     if phase == 'train':
       sampled_transitive_idx = torch.multinomial(transitivity_probs, self.sample_ct)
     else:
@@ -368,12 +373,15 @@ class Trainer:
   def __init__(self, train_loader, test_loader, device, model_dir, model_name, learning_rate, rule_learning_rate, constraint_weight, **args):
     self.device = device
     load_model = args.pop('load_model')
+    self.decay_ct = args.pop('decay_ct')
+
     if load_model:
       new_model = CLUTRRModel(device=device, **args).to(device)
-      loaded_model = torch.load(os.path.join(model_dir, model_name + '.best.model'))
+      loaded_model = torch.load(os.path.join(model_dir, model_name + '.latest.model'))
       new_model.tokenizer = loaded_model.tokenizer
       new_model.roberta_model = loaded_model.roberta_model
       new_model.transitivity_probs = loaded_model.transitivity_probs
+      new_model.relation_extraction = loaded_model.relation_extraction
       self.model = new_model
     else:
       self.model = CLUTRRModel(device=device, **args).to(device)
@@ -385,10 +393,16 @@ class Trainer:
     self.optimizer = optim.Adam(self.model.parameters() , lr=learning_rate)
     self.rule_optimizer = optim.Adam([self.model.transitivity_probs] , lr=rule_learning_rate)
 
+    # self.optimizer = optim.RMSprop(self.model.parameters() , lr=learning_rate)
+    # self.rule_optimizer = optim.RMSprop([self.model.transitivity_probs] , lr=rule_learning_rate)
+    # self.lr_optim = ExponentialLR(self.optimizer, gamma=0.8)
+    # self.lr_rule = ExponentialLR(self.rule_optimizer, gamma=0.8)
+
     self.train_loader = train_loader
     self.test_loader = test_loader
     self.min_test_loss = 10000000000.0
     self.max_accu = 0
+
 
   def loss(self, y_pred, y):
     result = y_pred['answer']
@@ -435,6 +449,8 @@ class Trainer:
       avg_loss = total_loss / (i + 1)
 
       iterator.set_description(f"[Train Epoch {epoch}] Avg Loss: {avg_loss}, Accuracy: {total_correct}/{total_count} ({correct_perc:.2f}%)")
+      # if i % self.decay_ct:
+      #   self.model.update_decay()
 
   def test_epoch(self, epoch, save=True):
     self.model.eval()
@@ -474,32 +490,36 @@ def pretty_print_rules(rules):
 if __name__ == "__main__":
   parser = ArgumentParser()
   parser.add_argument("--dataset", type=str, default="data_089907f8")
-  parser.add_argument("--model-name", type=str, default="clutrr_rule_and_facts_two_lr_2")
+  parser.add_argument("--model-name", type=str, default="clutrr_rule_and_facts_general")
   parser.add_argument("--load_model", type=bool, default=False)
   parser.add_argument("--n-epochs", type=int, default=100)
   parser.add_argument("--batch-size", type=int, default=16)
   parser.add_argument("--seed", type=int, default=2345)
-  parser.add_argument("--sample_ct", type=int, default=150)
+  parser.add_argument("--sample-ct", type=int, default=400)
   parser.add_argument("--learning-rate", type=float, default=0.00001)
-  parser.add_argument("--rule-learning-rate", type=float, default=0.01)
+  parser.add_argument("--rule-learning-rate", type=float, default=0.001)
+  parser.add_argument("--prob-decay", type=float, default=1)
+  parser.add_argument("--decay-ct", type=int, default=100)
+
   parser.add_argument("--constraint-weight", type=float, default=0.1)
+
 
   parser.add_argument("--num-mlp-layers", type=int, default=2)
   parser.add_argument("--provenance", type=str, default="difftopbottomkclauses")
+  # parser.add_argument("--provenance", type=str, default="diffaddmultprob")
   parser.add_argument("--train-top-k", type=int, default=3)
   parser.add_argument("--test-top-k", type=int, default=3)
   parser.add_argument("--no-fine-tune-roberta", type=bool, default=False)
   parser.add_argument("--use-softmax", type=bool, default=True)
   parser.add_argument("--scallop-softmax", type=bool, default=False)
   parser.add_argument("--debug", action="store_true")
-  parser.add_argument("--use-last-hidden-state", action="store_true")
   parser.add_argument("--cuda", type=bool, default=True)
   parser.add_argument("--gpu", type=int, default=0)
 
   args = parser.parse_args()
   print(args)
 
-  # args.model_name = f"{args.model_name}_{args.sample_ct}"
+  args.model_name = f"{args.model_name}_{args.sample_ct}"
 
   # Parameters: for some reason, the seed cannot fully control the reproductivity
   # Perhaps due to some error in pytorch c binding?
@@ -526,7 +546,11 @@ if __name__ == "__main__":
   (train_loader, test_loader) = clutrr_loader(data_root, args.dataset, args.batch_size)
 
   # Train
-  trainer = Trainer(train_loader, test_loader, device, model_dir, args.model_name, args.learning_rate, constraint_weight = args.constraint_weight, num_mlp_layers=args.num_mlp_layers, debug=args.debug, provenance=args.provenance, train_top_k=args.train_top_k, test_top_k=args.test_top_k, use_softmax=args.use_softmax, no_fine_tune_roberta=args.no_fine_tune_roberta, scallop_softmax = args.scallop_softmax,load_model=args.load_model, sample_ct=args.sample_ct, rule_learning_rate=args.rule_learning_rate, gpt_pred_path=args.gpt_pred_path)
+  trainer = Trainer(train_loader, test_loader, device, model_dir, args.model_name, args.learning_rate, constraint_weight = args.constraint_weight,
+                    num_mlp_layers=args.num_mlp_layers, debug=args.debug, provenance=args.provenance, train_top_k=args.train_top_k, test_top_k=args.test_top_k,
+                    use_softmax=args.use_softmax, no_fine_tune_roberta=args.no_fine_tune_roberta, scallop_softmax = args.scallop_softmax,load_model=args.load_model,
+                    sample_ct=args.sample_ct, rule_learning_rate=args.rule_learning_rate, gpt_pred_path=args.gpt_pred_path, decay_ct = args.decay_ct,
+                    prob_decay = args.prob_decay)
   trainer.train(args.n_epochs)
   # rules = trainer.get_rules(args.sample_ct)
   # pretty_print_rules(rules)
