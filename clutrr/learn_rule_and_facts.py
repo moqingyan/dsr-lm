@@ -155,7 +155,7 @@ class CLUTRRModel(nn.Module):
   def update_decay(self):
     self.transitivity_probs = self.transitivity_probs * self.transitivity_decay
 
-  def init_transitivity_from_file(self, gpt_preds, true_likelihood = 0.1, false_likelihood = 0.01):
+  def init_transitivity_from_file(self, gpt_preds, true_likelihood = 0.2, false_likelihood = 0.01):
     gpt_pred_ids = []
     for rel1, rel1_info in gpt_preds.items():
       for rel2, rel3 in rel1_info.items():
@@ -491,11 +491,11 @@ if __name__ == "__main__":
   parser = ArgumentParser()
   parser.add_argument("--dataset", type=str, default="data_089907f8")
   parser.add_argument("--model-name", type=str, default="clutrr_rule_and_facts_general")
-  parser.add_argument("--load_model", type=bool, default=False)
+  parser.add_argument("--load_model", type=bool, default=True)
   parser.add_argument("--n-epochs", type=int, default=100)
   parser.add_argument("--batch-size", type=int, default=16)
   parser.add_argument("--seed", type=int, default=2345)
-  parser.add_argument("--sample-ct", type=int, default=400)
+  parser.add_argument("--sample-ct", type=int, default=500)
   parser.add_argument("--learning-rate", type=float, default=0.00001)
   parser.add_argument("--rule-learning-rate", type=float, default=0.001)
   parser.add_argument("--prob-decay", type=float, default=1)
@@ -551,7 +551,7 @@ if __name__ == "__main__":
                     use_softmax=args.use_softmax, no_fine_tune_roberta=args.no_fine_tune_roberta, scallop_softmax = args.scallop_softmax,load_model=args.load_model,
                     sample_ct=args.sample_ct, rule_learning_rate=args.rule_learning_rate, gpt_pred_path=args.gpt_pred_path, decay_ct = args.decay_ct,
                     prob_decay = args.prob_decay)
-  trainer.train(args.n_epochs)
-  # rules = trainer.get_rules(args.sample_ct)
-  # pretty_print_rules(rules)
+  # trainer.train(args.n_epochs)
+  rules = trainer.get_rules(args.sample_ct)
+  pretty_print_rules(rules)
   # trainer.test_epoch(0, False)

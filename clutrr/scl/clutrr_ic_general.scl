@@ -77,6 +77,7 @@ rel valid_transitive_marry(r1, r2, r3) = transitive(r1, r2, r3), r2 != HUSBAND, 
 rel valid_transitive_in_law(r1, r2, r3) = transitive(r1, r2, r3),
                                             r1 != DAUGHTER_IN_LAW, r1 != SON_IN_LAW, r1 != MOTHER_IN_LAW, r1 != FATHER_IN_LAW,
                                             r2 != DAUGHTER_IN_LAW, r2 != SON_IN_LAW, r2 != MOTHER_IN_LAW, r2 != FATHER_IN_LAW
+                                            ,r2 != NIECE, r2 != NEPHEW
 rel valid_transitive(r1, r2, r3) = valid_transitive_gender(r1, r2, r3), valid_transitive_generation(r1, r2, r3), valid_transitive_in_law(r1, r2, r3), valid_transitive_marry(r1, r2, r3)
 // rel valid_transitive(r1, r2, r3) = valid_transitive_gender(r1, r2, r3), valid_transitive_generation(r1, r2, r3), valid_transitive_in_law(r1, r2, r3)
 
