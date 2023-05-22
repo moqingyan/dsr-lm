@@ -12,8 +12,12 @@ import numpy as np
 from torch import nn, optim
 from torch.utils.data import DataLoader
 from transformers import RobertaModel, RobertaTokenizer
+import math
 
 import scallopy
+from scallopy import ScallopContext
+
+import wandb
 
 relation_id_map = {
   'daughter': 0,
@@ -40,10 +44,12 @@ relation_id_map = {
 }
 
 class CLUTRRDataset:
-  def __init__(self, root, dataset, split):
+  def __init__(self, root, dataset, split, data_percentage):
     self.dataset_dir = os.path.join(root, f"{dataset}/")
     self.file_names = [os.path.join(self.dataset_dir, d) for d in os.listdir(self.dataset_dir) if f"_{split}.csv" in d]
     self.data = [row for f in self.file_names for row in list(csv.reader(open(f)))[1:]]
+    self.data_num = math.floor(len(self.data) * data_percentage / 100)
+    self.data = self.data[:self.data_num]
 
   def __len__(self):
     return len(self.data)
@@ -70,10 +76,10 @@ class CLUTRRDataset:
     return ((contexts, queries, context_splits), answers)
 
 
-def clutrr_loader(root, dataset, batch_size):
-  train_dataset = CLUTRRDataset(root, dataset, "train")
+def clutrr_loader(root, dataset, batch_size, training_data_percentage):
+  train_dataset = CLUTRRDataset(root, dataset, "train", training_data_percentage)
   train_loader = DataLoader(train_dataset, batch_size, collate_fn=CLUTRRDataset.collate_fn, shuffle=True)
-  test_dataset = CLUTRRDataset(root, dataset, "test")
+  test_dataset = CLUTRRDataset(root, dataset, "test", 100)
   test_loader = DataLoader(test_dataset, batch_size, collate_fn=CLUTRRDataset.collate_fn, shuffle=True)
   return (train_loader, test_loader)
 
@@ -102,6 +108,7 @@ class MLP(nn.Module):
 class CLUTRRModel(nn.Module):
   def __init__(
     self,
+    scl_file_name,
     device="cpu",
     num_mlp_layers=1,
     debug=False,
@@ -130,13 +137,14 @@ class CLUTRRModel(nn.Module):
 
     # Scallop reasoning context
     self.scallop_ctx = scallopy.ScallopContext(provenance=provenance, train_k=train_top_k, test_k=test_top_k)
-    self.scallop_ctx.import_file(os.path.abspath(os.path.join(os.path.abspath(__file__), "../scl/clutrr.scl")))
+    self.scallop_ctx.import_file(os.path.abspath(os.path.join(os.path.abspath(__file__), f"../scl/{scl_file_name}")))
     self.scallop_ctx.set_non_probabilistic(["question"])
 
     if self.debug:
-      self.reason = self.scallop_ctx.forward_function("answer", list(range(len(relation_id_map))), dispatch="single", debug_provenance=True)
+      self.reason = self.scallop_ctx.forward_function(output_mappings={"answer": list(range(len(relation_id_map))), "violate_ic": [False, True]}, dispatch="single", debug_provenance=True, retain_graph=True)
+      # self.reason = self.scallop_ctx.forward_function(output_mappings={"answer": list(range(len(relation_id_map))), "violate_ic": [False, True]}, dispatch="single", debug_provenance=True)
     else:
-      self.reason = self.scallop_ctx.forward_function("answer", list(range(len(relation_id_map))))
+      self.reason = self.scallop_ctx.forward_function(output_mappings={"answer": list(range(len(relation_id_map))), "violate_ic": [False, True]}, retain_graph=True)
 
   def _preprocess_contexts(self, contexts, context_splits):
     clean_context_splits = []
@@ -317,8 +325,9 @@ class CLUTRRModel(nn.Module):
 
     # Run Scallop to reason the result relation
     result = self.reason(context=context_facts, question=question_facts, disjunctions={"context": context_disjunctions})
-    if self.scallop_softmax:
-      result = torch.softmax(result, dim=1)
+
+    # if self.scallop_softmax:
+    #   result = torch.softmax(result, dim=1)
 
     # Return the final result
     return result
@@ -345,20 +354,31 @@ class Trainer:
     self.max_accu = 0
 
   def loss(self, y_pred, y):
-    (_, dim) = y_pred.shape
-    gt = torch.stack([torch.tensor([1.0 if i == t else 0.0 for i in range(dim)]) for t in y])
-    return nn.functional.binary_cross_entropy(y_pred, gt)
+    result = y_pred['answer']
+    ic = y_pred['violate_ic']
+    (_, dim) = result.shape
+    gt = torch.stack([torch.tensor([1.0 if i == t else 0.0 for i in range(dim)]) for t in y]).to('cuda')
+    result_loss = nn.functional.binary_cross_entropy(result, gt)
+    # ic_loss = 0.1 * nn.functional.nll_loss(ic[:, 1], torch.tensor([0] * ic.shape[0]).to('cuda'))
+    ic_loss = args.constraint_weight * nn.functional.l1_loss(ic[:, 1], torch.tensor([0] * ic.shape[0]).to('cuda'))
+    return result_loss + ic_loss
 
   def accuracy(self, y_pred, y):
     batch_size = len(y)
-    pred = torch.argmax(y_pred, dim=1)
+    result = y_pred['answer'].detach()
+    pred = torch.argmax(result, dim=1)
     num_correct = len([() for i, j in zip(pred, y) if i == j])
     return (num_correct, batch_size)
 
   def train(self, num_epochs):
+    # self.test_epoch(0)
     for i in range(1, num_epochs + 1):
-      self.train_epoch(i)
-      self.test_epoch(i)
+      train_avg_loss, train_correct_perc = self.train_epoch(i)
+      test_avg_loss, test_correct_perc = self.test_epoch(i)
+      wandb.log({"train_loss": train_avg_loss,
+                "train_accu": train_correct_perc,
+                "test_loss": test_avg_loss,
+                "test_accu": test_correct_perc,})
 
   def train_epoch(self, epoch):
     self.model.train()
@@ -368,7 +388,7 @@ class Trainer:
     iterator = tqdm(self.train_loader)
     for (i, (x, y)) in enumerate(iterator):
       self.optimizer.zero_grad()
-      y_pred = self.model(x, 'train').to("cpu")
+      y_pred = self.model(x, 'train')
       loss = self.loss(y_pred, y)
       total_loss += loss.item()
       loss.backward()
@@ -382,6 +402,8 @@ class Trainer:
 
       iterator.set_description(f"[Train Epoch {epoch}] Avg Loss: {avg_loss}, Accuracy: {total_correct}/{total_count} ({correct_perc:.2f}%)")
 
+    return avg_loss, correct_perc
+
   def test_epoch(self, epoch):
     self.model.eval()
     total_count = 0
@@ -390,7 +412,7 @@ class Trainer:
     with torch.no_grad():
       iterator = tqdm(self.test_loader)
       for (i, (x, y)) in enumerate(iterator):
-        y_pred = self.model(x, 'test').to("cpu")
+        y_pred = self.model(x, 'test')
         loss = self.loss(y_pred, y)
         total_loss += loss.item()
 
@@ -408,37 +430,67 @@ class Trainer:
       torch.save(self.model, os.path.join(self.model_dir, f"{self.model_name}.best.model"))
     torch.save(self.model, os.path.join(self.model_dir, f"{self.model_name}.latest.model"))
 
+    return avg_loss, correct_perc
+
 if __name__ == "__main__":
   parser = ArgumentParser()
   parser.add_argument("--dataset", type=str, default="data_089907f8")
-  parser.add_argument("--model-name", type=str, default="clutrr_global_1")
+  parser.add_argument("--model-name", type=str, default=None)
+  parser.add_argument("--training_data_percentage", type=int, default=100)
   parser.add_argument("--load_model", type=bool, default=False)
   parser.add_argument("--n-epochs", type=int, default=100)
-  parser.add_argument("--batch-size", type=int, default=32)
-  parser.add_argument("--seed", type=int, default=43)
+  parser.add_argument("--batch-size", type=int, default=16)
+  parser.add_argument("--seed", type=int, default=4321)
   parser.add_argument("--learning-rate", type=float, default=0.00001)
   parser.add_argument("--num-mlp-layers", type=int, default=2)
-  parser.add_argument("--provenance", type=str, default="difftopbottomkclauses")
+  parser.add_argument("--provenance", type=str, default="difftopkproofs")
   parser.add_argument("--train-top-k", type=int, default=3)
   parser.add_argument("--test-top-k", type=int, default=3)
+  parser.add_argument("--constraint-weight", type=float, default=0.1)
+  parser.add_argument("--scl-file-name", type=str, default="clutrr_constraints.scl")
+
   parser.add_argument("--no-fine-tune-roberta", type=bool, default=False)
   parser.add_argument("--use-softmax", type=bool, default=True)
   parser.add_argument("--scallop-softmax", type=bool, default=False)
-  parser.add_argument("--debug", action="store_true")
+  parser.add_argument("--debug", type=bool, default=False)
   parser.add_argument("--use-last-hidden-state", action="store_true")
   parser.add_argument("--cuda", type=bool, default=True)
   parser.add_argument("--gpu", type=int, default=0)
   args = parser.parse_args()
   print(args)
 
+  project_name = args.scl_file_name[:-4]
+  name = f"training_perc_{args.training_data_percentage}_seed_{args.seed}_{project_name}"
+  log_path = os.path.abspath(os.path.join(os.path.abspath(__file__), "../../../logs/clutrr"))
+  wandb.init(
+    project=project_name,
+    name = name,
+    dir=log_path,)
+
+  if args.model_name is None:
+    args.model_name = name
+
+  wandb.config = {
+    "learning_rate": args.learning_rate,
+    "epochs": args.n_epochs,
+    "batch_size": args.batch_size,
+    "seed": args.seed,
+    "provenance": args.provenance,
+    "train_top_k": args.train_top_k,
+    "test_top_k": args.test_top_k,
+    "constraint_weight": args.constraint_weight,
+    "training_data_percentage": args.training_data_percentage,
+  }
+
   # Parameters: for some reason, the seed cannot fully control the reproductivity
   # Perhaps due to some error in pytorch c binding?
   # The problem occurs for more than 2000 datapoints
-  torch.manual_seed(args.seed)
-  torch.cuda.manual_seed_all(args.seed)
-  random.seed(args.seed)
-  np.random.seed(args.seed)
-  transformers.set_seed(args.seed)
+  if args.seed is not None:
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed)
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    transformers.set_seed(args.seed)
   # transformers.enable_full_determinism(args.seed)
 
   if args.cuda:
@@ -448,12 +500,13 @@ if __name__ == "__main__":
 
   # Setting up data and model directories
   data_root = os.path.abspath(os.path.join(os.path.abspath(__file__), "../../data"))
-  model_dir = os.path.abspath(os.path.join(os.path.abspath(__file__), "../../model"))
+  model_dir = os.path.abspath(os.path.join(os.path.abspath(__file__), "../../model/clutrr"))
   if not os.path.exists(model_dir): os.makedirs(model_dir)
 
   # Load the dataset
-  (train_loader, test_loader) = clutrr_loader(data_root, args.dataset, args.batch_size)
+  (train_loader, test_loader) = clutrr_loader(data_root, args.dataset, args.batch_size, args.training_data_percentage)
 
   # Train
-  trainer = Trainer(train_loader, test_loader, device, model_dir, args.model_name, args.learning_rate, num_mlp_layers=args.num_mlp_layers, debug=args.debug, provenance=args.provenance, train_top_k=args.train_top_k, test_top_k=args.test_top_k, use_softmax=args.use_softmax, no_fine_tune_roberta=args.no_fine_tune_roberta, scallop_softmax = args.scallop_softmax,load_model=args.load_model)
+  trainer = Trainer(train_loader, test_loader, device, model_dir, args.model_name, args.learning_rate, num_mlp_layers=args.num_mlp_layers, debug=args.debug, provenance=args.provenance, train_top_k=args.train_top_k, test_top_k=args.test_top_k, use_softmax=args.use_softmax, no_fine_tune_roberta=args.no_fine_tune_roberta, scallop_softmax = args.scallop_softmax,load_model=args.load_model, scl_file_name=args.scl_file_name)
   trainer.train(args.n_epochs)
+  # trainer.test_epoch(0)
