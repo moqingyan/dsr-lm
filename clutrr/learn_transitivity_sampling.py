@@ -11,9 +11,6 @@ import torch
 import numpy as np
 from torch import nn, optim
 from torch.utils.data import DataLoader
-from torch.distributions.categorical import Categorical
-from transformers import Constraint, RobertaModel, RobertaTokenizer
-
 import scallopy
 
 relation_id_map = {
@@ -46,7 +43,7 @@ all_possible_transitives = [(a, b, c) for a in range(20) for b in range(20) for 
 
 class CLUTRRDataset:
   def __init__(self, root, dataset, split):
-    self.dataset_dir = os.path.join(root, f"CLUTRR/{dataset}/")
+    self.dataset_dir = os.path.join(root, f"{dataset}")
     self.file_names = [os.path.join(self.dataset_dir, d) for d in os.listdir(self.dataset_dir) if f"_{split}.csv" in d]
     self.data = [row for f in self.file_names for row in list(csv.reader(open(f)))[1:]]
 
@@ -107,11 +104,12 @@ class CLUTRRModel(nn.Module):
     self.sample_ct = sample_ct
 
     # Transitivity probs: Initialize with 0.1
-    self.transitivity_probs = torch.tensor(torch.ones(len(all_possible_transitives))/10, requires_grad=True)
+    self.transitivity_probs = torch.tensor(np.ones(len(all_possible_transitives))/10, requires_grad=True, device=self.device)
 
     # Scallop reasoning context
     self.scallop_ctx = scallopy.ScallopContext(provenance=provenance, train_k=train_top_k, test_k=test_top_k)
     self.scallop_ctx.import_file(os.path.abspath(os.path.join(os.path.abspath(__file__), "../scl/clutrr_no_transitivity.scl")))
+    self.scallop_ctx.set_iter_limit(10)
     self.scallop_ctx.set_non_probabilistic(["question"])
     self.scallop_ctx.set_non_probabilistic(["context"])
 
@@ -173,7 +171,7 @@ class Trainer:
 
   def loss(self, y_pred, y):
     (_, dim) = y_pred.shape
-    gt = torch.stack([torch.tensor([1.0 if i == t else 0.0 for i in range(dim)]) for t in y])
+    gt = torch.stack([torch.tensor([1.0 if i == t else 0.0 for i in range(dim)], device=self.device) for t in y])
     return nn.functional.binary_cross_entropy(y_pred, gt)
 
   def accuracy(self, y_pred, y):
@@ -196,7 +194,7 @@ class Trainer:
     iterator = tqdm(self.train_loader)
     for (i, (x, y)) in enumerate(iterator):
       self.optimizer.zero_grad()
-      y_pred = self.model(x, 'train').to("cpu")
+      y_pred = self.model(x, 'train')
       loss = self.loss(y_pred, y)
       total_loss += loss.item()
       loss.backward()
@@ -218,11 +216,7 @@ class Trainer:
     with torch.no_grad():
       iterator = tqdm(self.test_loader)
       for (i, (x, y)) in enumerate(iterator):
-
-        # if not i == 180:
-        #   continue
-
-        y_pred = self.model(x, 'test').to("cpu")
+        y_pred = self.model(x, 'test')
         loss = self.loss(y_pred, y)
         total_loss += loss.item()
 
@@ -255,7 +249,7 @@ if __name__ == "__main__":
   parser = ArgumentParser()
   parser.add_argument("--dataset", type=str, default="data_089907f8")
   parser.add_argument("--model-name", type=str, default="learn_transitivity_sample")
-  parser.add_argument("--load_model", type=bool, default=True)
+  parser.add_argument("--load_model", type=bool, default=False)
   parser.add_argument("--n-epochs", type=int, default=1000)
   parser.add_argument("--batch-size", type=int, default=64)
   parser.add_argument("--seed", type=int, default=5432)
@@ -302,7 +296,7 @@ if __name__ == "__main__":
 
   # Train
   trainer = Trainer(train_loader, test_loader, device, model_dir, args.model_name, args.learning_rate, debug=args.debug, provenance=args.provenance, train_top_k=args.train_top_k, test_top_k=args.test_top_k, no_fine_tune_roberta=args.no_fine_tune_roberta, scallop_softmax = args.scallop_softmax, load_model=args.load_model, sample_ct=args.sample_ct)
-  # trainer.train(args.n_epochs)
+  trainer.train(args.n_epochs)
   # trainer.test_epoch(0)
-  rules = trainer.get_rules()
-  pretty_print_rules(rules)
+  # rules = trainer.get_rules()
+  # pretty_print_rules(rules)

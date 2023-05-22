@@ -1,0 +1,19 @@
+// CLUTRR Scallop
+
+// question :: (sub, obj) represents a question asking about relation between `sub` and `obj`
+type question(sub: String, obj: String)
+
+// context :: (rela, sub, obj) represents there is a `rela` between `sub` and `obj`
+type context(rela: usize, sub: String, obj: String)
+
+// Relation level higher-order relationships
+type transitive(r1: usize, r2: usize, r3: usize)
+
+// Things can be derived through context propagation
+rel derived(r, s, o) = context(r, s, o)
+
+// Transitive
+rel derived(r3, x, z) = transitive(r1, r2, r3), derived(r1, x, y), derived(r2, y, z), x != z
+
+// Answer
+rel answer(r) = question(s, o), derived(r, s, o)
