@@ -17,8 +17,6 @@ import math
 import scallopy
 from scallopy import ScallopContext
 
-import wandb
-
 relation_id_map = {
   'daughter': 0,
   'sister': 1,
@@ -462,25 +460,8 @@ if __name__ == "__main__":
   project_name = args.scl_file_name[:-4]
   name = f"training_perc_{args.training_data_percentage}_seed_{args.seed}_{project_name}"
   log_path = os.path.abspath(os.path.join(os.path.abspath(__file__), "../../../logs/clutrr"))
-  wandb.init(
-    project=project_name,
-    name = name,
-    dir=log_path,)
-
   if args.model_name is None:
     args.model_name = name
-
-  wandb.config = {
-    "learning_rate": args.learning_rate,
-    "epochs": args.n_epochs,
-    "batch_size": args.batch_size,
-    "seed": args.seed,
-    "provenance": args.provenance,
-    "train_top_k": args.train_top_k,
-    "test_top_k": args.test_top_k,
-    "constraint_weight": args.constraint_weight,
-    "training_data_percentage": args.training_data_percentage,
-  }
 
   # Parameters: for some reason, the seed cannot fully control the reproductivity
   # Perhaps due to some error in pytorch c binding?
